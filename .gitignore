@@ -1,3 +1,4 @@
-web-app/cache
-web-app/backend/__pycache__
-web-app/backend/routers/__pycache__
+cache
+__pycache__
+backend/__pycache__
+backend/routers/__pycache__
