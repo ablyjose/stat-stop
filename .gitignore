@@ -2,3 +2,4 @@ cache
 __pycache__
 backend/__pycache__
 backend/routers/__pycache__
+start_app.ps1
