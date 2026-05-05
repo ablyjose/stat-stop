@@ -10,7 +10,7 @@ import time
 from datetime import date
 from pathlib import Path
 import os
-from .team_colors_dict import TEAM_COLORS
+from .team_colors_dict import TEAM_COLORS, DRIVER_COLORS
 
 router = APIRouter()
 
@@ -76,12 +76,8 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
                 if laps.empty:
                     continue
                 
-                # Get Color
-                drv_info = sess.get_driver(drv)
-                color = '#' + drv_info['TeamColor'] if drv_info['TeamColor'] else '#000000'
+                color = DRIVER_COLORS.get(drv, '#FFFFFF')
                 
-                # Prepare data points
-                # Returning list of {lap: int, time: float (seconds)}
                 lap_data = []
                 for idx, row in laps.iterrows():
                     lap_data.append({
@@ -177,51 +173,20 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
                  "Delta": float(delta_time[i])
              })
              
-        # Colors
 
-        driver_colors = {
-            'NOR': '#D2FF00',
-            'PIA': '#FF8F00',
-            'RUS': '#00D2BE',
-            'ANT': '#ADD8E6',
-            'VER': '#3671C6',
-            'TSU': '#1A2C80',
-            'LEC': '#DC0000',
-            'HAM': '#800080',
-            'ALB': '#FFCCC7',
-            'SAI': '#0082FA',
-            'HAD': '#12264F',
-            'LAW': '#F9F871',
-            'ALO': '#006F62',
-            'STR': '#006F62',
-            'OCO': '#F7F7F7',
-            'BEA': '#FF007F',
-            'HUL': '#39FF14',
-            'BOR': '#009739',
-            'GAS': '#4E90FF',
-            'COL': '#04299C',
-        }
-
-        if (driver1 in driver_colors):
-            c1 = driver_colors.get(driver1)
-        else:
-            c1 = '#'+ sess.get_driver(driver1)['TeamColor']
-        
-        if (driver2 in driver_colors):
-            c2 = driver_colors.get(driver2)
-        else:
-            c2 = '#'+sess.get_driver(driver2)['TeamColor']
+        c1 = DRIVER_COLORS.get(driver1, '#FFFFFF')
+        c2 = DRIVER_COLORS.get(driver2, '#FFFFFF')
         
         return {
             "Driver1": {
                 "Name": driver1,
-                "Color": c1 if c1 else "#000000",
+                "Color": c1,
                 "Telemetry": d1_data,
                 "LapTime": lap_d1['LapTime'].total_seconds()
             },
             "Driver2": {
                 "Name": driver2,
-                "Color": c2 if c2 else "#000000",
+                "Color": c2,
                 "Telemetry": d2_data,
                 "LapTime": lap_d2['LapTime'].total_seconds()
             },
