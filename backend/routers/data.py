@@ -10,116 +10,42 @@ import time
 from datetime import date
 from pathlib import Path
 import os
+from .team_colors_dict import TEAM_COLORS
 
 router = APIRouter()
 
-# --- Helper for OpenF1 caching ---
-# We use a separate cache for OpenF1 responses to avoid spamming the API
-CACHE_DIR = Path("web-app/cache/openF1") 
-# Handle relative path if running from different location, though main.py sets cwd usually?
-# Let's use absolute path relative to this file to be safe
-BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent # PortProjects/Formula1
-CACHE_DIR = BASE_DIR / "web-app/cache/openF1"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-def fetch_openf1(url, cache_key=None, use_cache=True):
-    if use_cache and cache_key:
-        file_path = CACHE_DIR / f"{cache_key}.json"
-        if file_path.exists():
-            with open(file_path, "r") as f:
-                return json.load(f)
-
-    # Fetch
-    try:
-        response = urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
-    except HTTPError as e:
-        # Retry once
-        time.sleep(0.5)
-        response = urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
-    
-    if use_cache and cache_key and data:
-        with open(file_path, "w") as f:
-            json.dump(data, f)
-            
-    return data
-
 @router.get("/standings")
-def get_standings(year: int = 2026):
+def get_standings(year: int):
     try:
-        # 1. Get Schedule
-        schedule_data = fetch_openf1(
-            f"https://api.openf1.org/v1/sessions?date_start>={year}-01-01&date_end<={min(str(date.today()), f'{year}-12-31')}&session_type=Race",
-            use_cache=False
-        )
-        schedule = pd.DataFrame(schedule_data)
+        url = f"https://api.jolpi.ca/ergast/f1/{year}/driverStandings.json"
         
-        if schedule.empty:
+        response = urlopen(url)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        standings_list = data.get('MRData', {}).get('StandingsTable', {}).get('StandingsLists', [])
+        if not standings_list:
             return []
-
-        schedule = schedule[schedule['is_cancelled'] == False]
-        session_keys = schedule['session_key'].tolist()
-        
-        # 2. Get Initial Drivers (from first session) to easier initialize df
-        # Note: Logic adapted from global driver list approach might be better, 
-        # but following original script's flow:
-        first_session_drivers = fetch_openf1(
-            f"https://api.openf1.org/v1/drivers?session_key={session_keys[0]}",
-            cache_key=f"drivers_{session_keys[0]}"
-        )
-        drivers_df = pd.DataFrame(first_session_drivers)
-        
-        standings = pd.DataFrame({
-            'DriverNumber': drivers_df['driver_number'],
-            'Driver': drivers_df['full_name'],
-            'Points': 0.0,
-            'Team': drivers_df['team_name'],
-            'Color': drivers_df['team_colour'] # Added color for UI
-        })
-        
-        # 3. Iterate sessions
-        for key in session_keys:
-            session_result = fetch_openf1(
-                f"https://api.openf1.org/v1/session_result?session_key={key}",
-                cache_key=f"result_{key}"
-            )
-            results = pd.DataFrame(session_result)
             
-            if results.empty:
-                continue
-
-            for index, row in results.iterrows():
-                driver_number = row['driver_number']
-                points = row['points']
-                
-                if driver_number in standings['DriverNumber'].values:
-                    standings.loc[standings['DriverNumber'] == driver_number, 'Points'] += points
-                else:
-                    # Fetch new driver info if not in list
-                    # Verify cache key uniqueness for driver+session
-                    new_driver_data = fetch_openf1(
-                        f"https://api.openf1.org/v1/drivers?driver_number={driver_number}&session_key={key}",
-                        cache_key=f"driver_{driver_number}_{key}"
-                    )
-                    new_driver = pd.DataFrame(new_driver_data)
-                    if not new_driver.empty:
-                        new_row = pd.DataFrame({
-                            'DriverNumber': new_driver['driver_number'],
-                            'Driver': new_driver['full_name'],
-                            'Points': points,
-                            'Team': new_driver['team_name'],
-                            'Color': new_driver['team_colour']
-                        })
-                        standings = pd.concat([standings, new_row], ignore_index=True)
-
-        updated_standings = standings.sort_values(by='Points', ascending=False).reset_index(drop=True)
-        updated_standings = updated_standings.fillna('') # Handle NaN for JSON
+        driver_standings = standings_list[0].get('DriverStandings', [])
         
-        return updated_standings.to_dict(orient='records')
+        standings = []
+        for row in driver_standings:
+            driver = row.get('Driver', {})
+            constructors = row.get('Constructors', [])
+            constructor = constructors[0] if constructors else {'name': 'Unknown', 'constructorId': ''}
+            
+            standings.append({
+                'DriverNumber': int(driver.get('permanentNumber', 0)),
+                'Driver': f"{driver.get('givenName', '')} {driver.get('familyName', '')}",
+                'Points': float(row.get('points', 0)),
+                'Team': constructor.get('name', 'Unknown'),
+                'Color': TEAM_COLORS.get(constructor.get('constructorId', ''), '#FFFFFF')
+            })
+            
+        return standings
 
     except Exception as e:
-        print(e)
+        print(f"Standings error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/race-pace")

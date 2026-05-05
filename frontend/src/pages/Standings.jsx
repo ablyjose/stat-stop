@@ -6,8 +6,8 @@ import InputSelect from '../components/InputSelect';
 const Standings = () => {
     const [standings, setStandings] = useState([]);
     const [loading, setLoading] = useState(true);
-
-    const [year, setYear] = useState(2026);
+    const currentYear = new Date().getFullYear();
+    const [year, setYear] = useState(currentYear);
 
     useEffect(() => {
         const fetchStandings = async () => {
@@ -30,19 +30,16 @@ const Standings = () => {
         <div className="page-standings">
             <header style={{ marginBottom: '22px' }}>
                 <h1 style={{ fontSize: '2rem', fontWeight: 700, marginBottom: '8px' }}>Driver Standings</h1>
-                {/* <p style={{ color: 'var(--text-secondary)' }}>{year} World Championship</p> */}
             </header>
 
             <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'flex-start' }}>
                 <InputSelect
                     value={year}
                     onChange={setYear}
-                    options={[
-                        { label: '2026', value: 2026 },
-                        { label: '2025', value: 2025 },
-                        { label: '2024', value: 2024 },
-                        { label: '2023', value: 2023 }
-                    ]}
+                    options={Array.from({ length: currentYear - 1950 + 1 }, (_, i) => ({
+                        label: String(currentYear - i),
+                        value: currentYear - i
+                    }))}
                 />
             </div>
 
@@ -58,7 +55,7 @@ const Standings = () => {
                     </thead>
                     <tbody>
                         {standings.map((driver, index) => (
-                            <tr key={driver.DriverNumber}>
+                            <tr key={driver.Driver}>
                                 <td style={{ fontWeight: 600, color: index < 3 ? 'var(--f1-red)' : 'inherit' }}>
                                     {index + 1}
                                     {index === 0 && <Trophy size={14} style={{ display: 'inline', marginLeft: '6px' }} />}
@@ -69,7 +66,7 @@ const Standings = () => {
                                         width: '4px',
                                         height: '24px',
                                         borderRadius: '2px',
-                                        background: driver.Color ? `#${driver.Color}` : '#ccc'
+                                        background: driver.Color ? (driver.Color.startsWith('#') ? driver.Color : `#${driver.Color}`) : '#ccc'
                                     }}></span>
                                     <span style={{ fontWeight: 500 }}>{driver.Driver}</span>
                                     <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)' }}>#{driver.DriverNumber}</span>
