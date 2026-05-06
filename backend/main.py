@@ -5,8 +5,12 @@ import os
 
 from routers import data
 
-# Setup Cache
-cache_dir = os.path.join(os.getcwd(), '..', '..', 'cache')
+# Setup Cache - Use /tmp on Vercel (read-only filesystem except /tmp)
+if os.environ.get('VERCEL'):
+    cache_dir = '/tmp/f1_cache'
+else:
+    cache_dir = os.path.join(os.getcwd(), '..', '..', 'cache')
+
 if not os.path.exists(cache_dir):
     os.makedirs(cache_dir)
 fastf1.Cache.enable_cache(cache_dir)
@@ -20,7 +24,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],  # Allow all origins for Vercel deployment
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,3 +35,4 @@ app.include_router(data.router)
 @app.get("/")
 def read_root():
     return {"message": "F1 Analysis API is running"}
+
