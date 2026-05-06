@@ -10,7 +10,7 @@ import time
 from datetime import date
 from pathlib import Path
 import os
-from .team_colors_dict import TEAM_COLORS, DRIVER_COLORS
+from .colors import TEAM_COLORS, DRIVER_COLORS
 
 router = APIRouter()
 
