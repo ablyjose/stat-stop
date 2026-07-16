@@ -3,3 +3,10 @@ __pycache__
 backend/__pycache__
 backend/routers/__pycache__
 start_app.ps1
+
+# OpenSpec Folders
+.agent
+.cursor
+.github
+.vscode
+openspec

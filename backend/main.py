@@ -9,7 +9,7 @@ from routers import data
 if os.environ.get('VERCEL'):
     cache_dir = '/tmp/f1_cache'
 else:
-    cache_dir = os.path.join(os.getcwd(), '..', '..', 'cache')
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
 
 if not os.path.exists(cache_dir):
     os.makedirs(cache_dir)
