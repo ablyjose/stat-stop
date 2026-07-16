@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getTelemetry, getEvents } from '../services/api';
+import { getTelemetry, getEvents, getDrivers } from '../services/api';
 import ChartContainer from '../components/ChartContainer';
 import InputSelect from '../components/InputSelect';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -103,6 +103,7 @@ const Telemetry = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
+    const [drivers, setDrivers] = useState([]);
 
     // Form
     const [year, setYear] = useState(2026);
@@ -110,15 +111,23 @@ const Telemetry = () => {
     const [session, setSession] = useState('Q');
     const [driver1, setDriver1] = useState('RUS');
     const [driver2, setDriver2] = useState('ANT');
+    const [lap1, setLap1] = useState('fastest');
+    const [lap2, setLap2] = useState('fastest');
 
     useEffect(() => {
         getEvents(year).then(setEvents).catch(console.error);
     }, [year]);
 
+    useEffect(() => {
+        getDrivers(year, gp, session).then(setDrivers).catch(console.error);
+    }, [year, gp, session]);
+
     const fetchData = async () => {
         setLoading(true);
         try {
-            const result = await getTelemetry(year, gp, session, driver1, driver2);
+            const finalLap1 = lap1.trim() || 'fastest';
+            const finalLap2 = lap2.trim() || 'fastest';
+            const result = await getTelemetry(year, gp, session, driver1, driver2, finalLap1, finalLap2);
             setData(result);
         } catch (err) {
             console.error(err);
@@ -141,12 +150,22 @@ const Telemetry = () => {
                     <InputSelect label="Session" value={session} onChange={setSession} options={[{ label: 'Practice 1', value: 'FP1' }, { label: 'Practice 2', value: 'FP2' }, { label: 'Practice 3', value: 'FP3' }, { label: 'Sprint Qualifying', value: 'SQ' }, { label: 'Sprint', value: 'S' }, { label: 'Qualifying', value: 'Q' }, { label: 'Race', value: 'R' }]} />
 
                     <div className="input-group">
-                        <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Driver 1</label>
-                        <input className="input-text" value={driver1} onChange={e => setDriver1(e.target.value)} />
+                        <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            Driver 1 & Lap
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <InputSelect value={driver1} onChange={setDriver1} options={drivers.map(d => ({ label: d.Driver, value: d.Driver, title: d.Name }))} />
+                            <input className="input-text" style={{ width: '70px' }} value={lap1} onChange={e => setLap1(e.target.value)} placeholder="fastest" title="Lap (fastest or lap number)" />
+                        </div>
                     </div>
                     <div className="input-group">
-                        <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Driver 2</label>
-                        <input className="input-text" value={driver2} onChange={e => setDriver2(e.target.value)} />
+                        <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            Driver 2 & Lap
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <InputSelect value={driver2} onChange={setDriver2} options={drivers.map(d => ({ label: d.Driver, value: d.Driver, title: d.Name }))} />
+                            <input className="input-text" style={{ width: '70px' }} value={lap2} onChange={e => setLap2(e.target.value)} placeholder="fastest" title="Lap (fastest or lap number)" />
+                        </div>
                     </div>
 
                     <button className="btn btn-primary" onClick={fetchData} disabled={loading}>

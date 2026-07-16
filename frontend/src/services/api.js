@@ -10,6 +10,13 @@ export const getEvents = async (year = 2025) => {
     return response.data;
 };
 
+export const getDrivers = async (year, gp, sess_type) => {
+    const response = await api.get('/drivers', {
+        params: { year, gp, sess_type }
+    });
+    return response.data;
+};
+
 export const getStandings = async (year = 2025) => {
     const response = await api.get(`/standings?year=${year}`);
     return response.data;
@@ -22,9 +29,9 @@ export const getRacePace = async (year, gp, session, drivers) => {
     return response.data;
 };
 
-export const getTelemetry = async (year, gp, session, driver1, driver2) => {
+export const getTelemetry = async (year, gp, session, driver1, driver2, lap1 = 'fastest', lap2 = 'fastest') => {
     const response = await api.get('/telemetry', {
-        params: { year, gp, session, driver1, driver2 }
+        params: { year, gp, session, driver1, driver2, lap1, lap2 }
     });
     return response.data;
 };
