@@ -20,7 +20,7 @@ const InputSelect = ({ label, value, onChange, options = [], placeholder = 'Sele
             >
                 <option value="" disabled>{placeholder}</option>
                 {options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
+                    <option key={opt.value} value={opt.value} title={opt.title}>
                         {opt.label}
                     </option>
                 ))}

@@ -63,7 +63,7 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
         # fastf1.get_session(year, gp, session) accepts (2025, 'Brazil', 'R')
         
         sess = fastf1.get_session(year, gp, session)
-        sess.load(messages=False, weather=False)
+        sess.load(messages=False, weather=False, telemetry=False)
         
         response_data = []
 
@@ -204,7 +204,6 @@ def get_events(year: int = 2026):
         schedule = fastf1.get_event_schedule(year)
         events = []
         for i, row in schedule.iterrows():
-            # Skip testing?
             if "Test" in row['EventName']:
                 continue
                 
@@ -217,5 +216,15 @@ def get_events(year: int = 2026):
                 "OfficialEventName": row['OfficialEventName']
             })
         return events
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/drivers")
+def get_drivers(year: int, gp: str, sess_type: str):
+    try:
+        session = fastf1.get_session(year, gp, sess_type)
+        session.load(telemetry=False, weather=False, messages=False, laps=False)
+        drivers = session.results[['Abbreviation', 'FullName']]
+        return [{"Name": d[2], "Driver": d[1]} for d in drivers.itertuples()]
     except Exception as e:
         return {"error": str(e)}
