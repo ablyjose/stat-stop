@@ -11,7 +11,60 @@ from datetime import date
 from pathlib import Path
 import os
 from .colors import TEAM_COLORS, DRIVER_COLORS
-from r2_client import get_json_cache, set_json_cache
+from r2_client import get_json_cache, set_json_cache, safe_float
+from fastf1.mvapi import get_circuit_info as mvapi_get_circuit_info
+
+
+def extract_corners_from_circuit_info(circuit_info):
+    """Extract corner distances from FastF1 circuit info without assuming timing cache data exists."""
+    corners = []
+    if circuit_info is None or not hasattr(circuit_info, 'corners'):
+        return corners
+
+    try:
+        for _, corner in circuit_info.corners.iterrows():
+            distance_value = corner['Distance']
+            if pd.isna(distance_value):
+                continue
+            corners.append({
+                "Number": int(corner['Number']),
+                "Distance": safe_float(distance_value),
+                "Letter": str(corner['Letter']) if not pd.isna(corner['Letter']) and corner['Letter'] else ""
+            })
+    except Exception as ce:
+        print(f"Error extracting circuit corners: {ce}")
+
+    return corners
+
+
+def get_safe_circuit_info(sess):
+    """Safely fetch circuit info, falling back to other drivers/laps if the fastest lap telemetry is missing."""
+    try:
+        # Try default FastF1 method first
+        return sess.get_circuit_info()
+    except Exception as e:
+        print(f"Warning: Default get_circuit_info failed: {e}. Attempting fallback...")
+        
+    try:
+        c_key = sess.session_info['Meeting']['Circuit']['Key']
+        circuit_info = mvapi_get_circuit_info(year=sess.event.year, circuit_key=c_key)
+        
+        # Search for any lap in the session that has valid telemetry
+        for _, lap in sess.laps.iterrows():
+            try:
+                tel = lap.get_telemetry()
+                if tel is not None and not tel.empty and 'Distance' in tel.columns:
+                    circuit_info.add_marker_distance(reference_lap=lap)
+                    print(f"✓ Re-mapped corners using fallback reference lap from driver {lap['Driver']} (Lap {lap['LapNumber']})")
+                    return circuit_info
+            except Exception:
+                continue
+                
+        print("Warning: No laps with valid telemetry found. Returning corners without distance markers.")
+        return circuit_info
+    except Exception as ex:
+        print(f"Error in get_safe_circuit_info fallback: {ex}")
+        return None
 
 router = APIRouter()
 
@@ -142,27 +195,20 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
         if data1 and data2:
             print(f"Telemetry Cache Hit for {driver1} ({lap1}) and {driver2} ({lap2})")
             
-            # Fetch corners from timing index if available
-            corners = []
-            session_key = f"timing/{year}/{gp}/{session}/laps.json"
-            session_data = get_json_cache(session_key)
-            if session_data and "Corners" in session_data:
-                corners = session_data["Corners"]
-            else:
-                # If corners are missing, fetch them quickly without heavy loading
+            # Fetch corners from circuit corners cache if available; otherwise compute and cache them.
+            corners_key = f"circuit/{year}/{gp}/corners.json"
+            corners = get_json_cache(corners_key)
+            if not corners:
                 try:
                     sess = fastf1.get_session(year, gp, session)
-                    sess.load(telemetry=False, laps=False, weather=False, messages=False)
-                    circuit_info = sess.get_circuit_info()
-                    if circuit_info is not None:
-                        for _, corner in circuit_info.corners.iterrows():
-                            corners.append({
-                                "Number": int(corner['Number']),
-                                "Distance": float(corner['Distance']),
-                                "Letter": corner['Letter'] if not pd.isna(corner['Letter']) else ""
-                            })
+                    sess.load(weather=False, messages=False)
+                    circuit_info = get_safe_circuit_info(sess)
+                    corners = extract_corners_from_circuit_info(circuit_info)
+                    if corners:
+                        set_json_cache(corners_key, corners)
                 except Exception as ce:
                     print(f"Error fetching corners for cached hit: {ce}")
+                    corners = []
 
             # Reconstruct Delta using NumPy interpolation
             d1_telemetry = data1["Telemetry"]
@@ -180,8 +226,8 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
                 delta = comp_time_interpolated - np.array(d1_time)
                 for i in range(len(d1_dist)):
                     delta_data.append({
-                        "Distance": float(d1_dist[i]),
-                        "Delta": float(delta[i])
+                        "Distance": safe_float(d1_dist[i]),
+                        "Delta": safe_float(delta[i])
                     })
                     
             return {
@@ -224,28 +270,30 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
         delta_time, ref_tel, compare_tel = utils.delta_time(lap_d1, lap_d2)
         
         # Get Circuit Info (Corners)
-        circuit_info = sess.get_circuit_info()
-        corners = []
-        if circuit_info is not None:
-             for _, corner in circuit_info.corners.iterrows():
-                  corners.append({
-                      "Number": int(corner['Number']),
-                      "Distance": float(corner['Distance']),
-                      "Letter": corner['Letter'] if not pd.isna(corner['Letter']) else ""
-                  })
+        corners_key = f"circuit/{year}/{gp}/corners.json"
+        corners = get_json_cache(corners_key)
+        if not corners:
+            try:
+                circuit_info = get_safe_circuit_info(sess)
+                corners = extract_corners_from_circuit_info(circuit_info)
+                if corners:
+                    set_json_cache(corners_key, corners)
+            except Exception as ce:
+                print(f"Error fetching/caching corners: {ce}")
+                corners = []
                   
         def process_tel(tel):
             data = []
             for i in range(len(tel)):
                 data.append({
-                    "Distance": float(tel['Distance'].iloc[i]),
-                    "Speed": float(tel['Speed'].iloc[i]),
-                    "Throttle": float(tel['Throttle'].iloc[i]),
-                    "Brake": float(tel['Brake'].iloc[i]),
-                    "RPM": float(tel['RPM'].iloc[i]),
-                    "nGear": int(tel['nGear'].iloc[i]),
-                    "DRS": int(tel['DRS'].iloc[i]),
-                    "Time": float(tel['Time'].iloc[i].total_seconds())
+                    "Distance": safe_float(tel['Distance'].iloc[i]),
+                    "Speed": safe_float(tel['Speed'].iloc[i]),
+                    "Throttle": safe_float(tel['Throttle'].iloc[i]),
+                    "Brake": safe_float(tel['Brake'].iloc[i]),
+                    "RPM": safe_float(tel['RPM'].iloc[i]),
+                    "nGear": int(tel['nGear'].iloc[i]) if not pd.isna(tel['nGear'].iloc[i]) else 0,
+                    "DRS": int(tel['DRS'].iloc[i]) if not pd.isna(tel['DRS'].iloc[i]) else 0,
+                    "Time": safe_float(tel['Time'].iloc[i].total_seconds())
                 })
             return data
             
@@ -255,8 +303,8 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
         delta_data = []
         for i in range(len(delta_time)):
              delta_data.append({
-                 "Distance": float(ref_tel['Distance'].iloc[i]),
-                 "Delta": float(delta_time[i])
+                 "Distance": safe_float(ref_tel['Distance'].iloc[i]),
+                 "Delta": safe_float(delta_time[i])
              })
              
         # Save cache files to R2
@@ -278,17 +326,7 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
             }
             set_json_cache(key2, d2_cache)
             
-        # Update corners in session timing file if possible
-        try:
-            session_key = f"timing/{year}/{gp}/{session}/laps.json"
-            session_data = get_json_cache(session_key)
-            if not session_data:
-                session_data = {"TotalLaps": 0, "Drivers": {}, "Corners": corners}
-            else:
-                session_data["Corners"] = corners
-            set_json_cache(session_key, session_data)
-        except Exception as se:
-            print(f"Error caching corners: {se}")
+        # No longer updating corners in session timing file since they are stored in a dedicated circuit-level cache
             
         c1 = DRIVER_COLORS.get(driver1, '#FFFFFF')
         c2 = DRIVER_COLORS.get(driver2, '#FFFFFF')
