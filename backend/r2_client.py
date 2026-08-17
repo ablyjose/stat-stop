@@ -2,6 +2,7 @@ import os
 import math
 import boto3
 import json
+from pathlib import Path
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from dotenv import dotenv_values
@@ -17,12 +18,18 @@ def safe_float(value, default=0.0):
     except (TypeError, ValueError):
         return default
 
-config = dotenv_values()
+# Added for Vercel environment compatibility
+_local_config = dotenv_values(Path(__file__).with_name(".env"))
 
-R2_ENDPOINT_URL = config.get("R2_ENDPOINT_URL")
-R2_ACCESS_KEY_ID = config.get("R2_ACCESS_KEY_ID")
-R2_SECRET_ACCESS_KEY = config.get("R2_SECRET_ACCESS_KEY")
-R2_BUCKET_NAME = config.get("R2_BUCKET_NAME")
+
+def _get_config_value(name: str):
+    return os.environ.get(name) or _local_config.get(name)
+
+
+R2_ENDPOINT_URL = _get_config_value("R2_ENDPOINT_URL")
+R2_ACCESS_KEY_ID = _get_config_value("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = _get_config_value("R2_SECRET_ACCESS_KEY")
+R2_BUCKET_NAME = _get_config_value("R2_BUCKET_NAME")
 
 def get_r2_client():
     if not all([R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
