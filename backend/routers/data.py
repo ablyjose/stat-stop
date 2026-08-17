@@ -68,6 +68,17 @@ def get_safe_circuit_info(sess):
 
 router = APIRouter()
 
+SESSION_KEY_MAP = {
+    'Practice 1': 'FP1',
+    'Practice 2': 'FP2',
+    'Practice 3': 'FP3',
+    'Sprint Shootout': 'SQ',
+    'Sprint Qualifying': 'SQ',
+    'Sprint': 'S',
+    'Qualifying': 'Q',
+    'Race': 'R',
+}
+
 @router.get("/standings")
 def get_standings(year: int):
     try:
@@ -371,7 +382,24 @@ def get_events(year: int = 2026):
             })
         return events
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Events error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sessions")
+def get_sessions(year: int, gp: str):
+    try:
+        event = fastf1.get_event(year, gp)
+        sessions = []
+        for i in range(1, 6):
+            sess_name = event.get_session_name(i)
+            if sess_name:
+                key = SESSION_KEY_MAP.get(sess_name)
+                if key:
+                    sessions.append({"SessionName": sess_name, "SessionKey": key})
+        return sessions
+    except Exception as e:
+        print(f"Sessions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/drivers")
 def get_drivers(year: int, gp: str, sess_type: str):
@@ -381,4 +409,5 @@ def get_drivers(year: int, gp: str, sess_type: str):
         drivers = session.results[['Abbreviation', 'FullName']]
         return [{"Name": d[2], "Driver": d[1]} for d in drivers.itertuples()]
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Drivers error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
