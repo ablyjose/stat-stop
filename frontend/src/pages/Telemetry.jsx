@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getTelemetry, getEvents, getDrivers } from '../services/api';
+import { getTelemetry, getEvents, getSessions, getDrivers } from '../services/api';
 import ChartContainer from '../components/ChartContainer';
 import InputSelect from '../components/InputSelect';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -97,18 +97,18 @@ const TelemetryChart = React.memo(({ data, title, dataKey, yLabel, syncId = "tel
     );
 });
 
-// const Telemetry = () => {
-
 const Telemetry = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
+    const [sessions, setSessions] = useState([]);
+    const [session, setSession] = useState('Q');
     const [drivers, setDrivers] = useState([]);
 
     // Form
-    const [year, setYear] = useState(2026);
+    const currentYear = new Date().getFullYear();
+    const [year, setYear] = useState(currentYear);
     const [gp, setGp] = useState('Australia');
-    const [session, setSession] = useState('Q');
     const [driver1, setDriver1] = useState('RUS');
     const [driver2, setDriver2] = useState('ANT');
     const [lap1, setLap1] = useState('fastest');
@@ -119,7 +119,23 @@ const Telemetry = () => {
     }, [year]);
 
     useEffect(() => {
-        getDrivers(year, gp, session).then(setDrivers).catch(console.error);
+        getSessions(year, gp)
+            .then((data) => {
+                if (Array.isArray(data)) {
+                    setSessions(data);
+                    const keys = data.map(s => s.SessionKey).filter(Boolean);
+                    if (keys.length > 0) {
+                        setSession(prev => keys.includes(prev) ? prev : (keys.includes('Q') ? 'Q' : keys[keys.length - 1]));
+                    }
+                }
+            })
+            .catch(console.error);
+    }, [year, gp]);
+
+    useEffect(() => {
+        if (session) {
+            getDrivers(year, gp, session).then(setDrivers).catch(console.error);
+        }
     }, [year, gp, session]);
 
     const fetchData = async () => {
@@ -145,9 +161,9 @@ const Telemetry = () => {
             {/* Event Selection */}
             <div className="card" style={{ margin: '24px 0' }}>
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'end' }}>
-                    <InputSelect label="Year" value={year} onChange={setYear} options={[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026].map(y => ({ label: y, value: y }))} />
+                    <InputSelect label="Year" value={year} onChange={setYear} options={Array.from({ length: currentYear - 2018 + 1 }, (_, i) => ({ label: String(currentYear - i), value: currentYear - i }))} />
                     <InputSelect label="Event" value={gp} onChange={setGp} options={events.map(e => ({ label: e.EventName, value: e.EventName }))} />
-                    <InputSelect label="Session" value={session} onChange={setSession} options={[{ label: 'Practice 1', value: 'FP1' }, { label: 'Practice 2', value: 'FP2' }, { label: 'Practice 3', value: 'FP3' }, { label: 'Sprint Qualifying', value: 'SQ' }, { label: 'Sprint', value: 'S' }, { label: 'Qualifying', value: 'Q' }, { label: 'Race', value: 'R' }]} />
+                    <InputSelect label="Session" value={session} onChange={setSession} options={sessions.map(s => ({ label: s.SessionName, value: s.SessionKey }))} />
 
                     <div className="input-group">
                         <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>

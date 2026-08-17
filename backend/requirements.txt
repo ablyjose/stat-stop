@@ -4,3 +4,5 @@ fastf1
 pandas
 numpy
 requests
+boto3
+python-dotenv

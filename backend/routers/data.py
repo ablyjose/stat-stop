@@ -11,8 +11,73 @@ from datetime import date
 from pathlib import Path
 import os
 from .colors import TEAM_COLORS, DRIVER_COLORS
+from r2_client import get_json_cache, set_json_cache, safe_float
+from fastf1.mvapi import get_circuit_info as mvapi_get_circuit_info
+
+
+def extract_corners_from_circuit_info(circuit_info):
+    """Extract corner distances from FastF1 circuit info without assuming timing cache data exists."""
+    corners = []
+    if circuit_info is None or not hasattr(circuit_info, 'corners'):
+        return corners
+
+    try:
+        for _, corner in circuit_info.corners.iterrows():
+            distance_value = corner['Distance']
+            if pd.isna(distance_value):
+                continue
+            corners.append({
+                "Number": int(corner['Number']),
+                "Distance": safe_float(distance_value),
+                "Letter": str(corner['Letter']) if not pd.isna(corner['Letter']) and corner['Letter'] else ""
+            })
+    except Exception as ce:
+        print(f"Error extracting circuit corners: {ce}")
+
+    return corners
+
+
+def get_safe_circuit_info(sess):
+    """Safely fetch circuit info, falling back to other drivers/laps if the fastest lap telemetry is missing."""
+    try:
+        # Try default FastF1 method first
+        return sess.get_circuit_info()
+    except Exception as e:
+        print(f"Warning: Default get_circuit_info failed: {e}. Attempting fallback...")
+        
+    try:
+        c_key = sess.session_info['Meeting']['Circuit']['Key']
+        circuit_info = mvapi_get_circuit_info(year=sess.event.year, circuit_key=c_key)
+        
+        # Search for any lap in the session that has valid telemetry
+        for _, lap in sess.laps.iterrows():
+            try:
+                tel = lap.get_telemetry()
+                if tel is not None and not tel.empty and 'Distance' in tel.columns:
+                    circuit_info.add_marker_distance(reference_lap=lap)
+                    print(f"✓ Re-mapped corners using fallback reference lap from driver {lap['Driver']} (Lap {lap['LapNumber']})")
+                    return circuit_info
+            except Exception:
+                continue
+                
+        print("Warning: No laps with valid telemetry found. Returning corners without distance markers.")
+        return circuit_info
+    except Exception as ex:
+        print(f"Error in get_safe_circuit_info fallback: {ex}")
+        return None
 
 router = APIRouter()
+
+SESSION_KEY_MAP = {
+    'Practice 1': 'FP1',
+    'Practice 2': 'FP2',
+    'Practice 3': 'FP3',
+    'Sprint Shootout': 'SQ',
+    'Sprint Qualifying': 'SQ',
+    'Sprint': 'S',
+    'Qualifying': 'Q',
+    'Race': 'R',
+}
 
 @router.get("/standings")
 def get_standings(year: int):
@@ -54,14 +119,23 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
     driver_list = [d.strip() for d in drivers.split(',')]
     
     try:
-        # Load session
-        # Use session identifier (e.g. 'R' for Race)
-        # Note: fastf1 might need cache dir set globally in main.py, which we did.
+        cache_key = f"timing/{year}/{gp}/{session}/laps.json"
+        cached_data = get_json_cache(cache_key)
         
-        # Map generic names to specific enough queries?
-        # User input might need to be flexible.
-        # fastf1.get_session(year, gp, session) accepts (2025, 'Brazil', 'R')
-        
+        if cached_data:
+            print(f"Race Pace Cache Hit for {year} {gp} {session}")
+            response_drivers = []
+            for drv in driver_list:
+                if drv in cached_data["Drivers"]:
+                    drv_data = cached_data["Drivers"][drv]
+                    response_drivers.append({
+                        "Driver": drv,
+                        "Color": DRIVER_COLORS.get(drv, '#FFFFFF'),
+                        "Laps": drv_data["Laps"]
+                    })
+            return {"TotalLaps": cached_data["TotalLaps"], "Drivers": response_drivers}
+            
+        print(f"Race Pace Cache Miss for {year} {gp} {session}. Fetching from FastF1...")
         sess = fastf1.get_session(year, gp, session)
         sess.load(messages=False, weather=False, telemetry=False)
         
@@ -70,13 +144,19 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
         # Get the total number of laps in the session
         total_laps = int(sess.laps['LapNumber'].max()) if not sess.laps.empty else 0
 
-        for drv in driver_list:
+        # Get all unique drivers who set a lap
+        all_drivers = list(sess.laps['Driver'].unique()) if not sess.laps.empty else []
+        
+        full_cache_data = {
+            "TotalLaps": total_laps,
+            "Drivers": {}
+        }
+
+        for drv in all_drivers:
             try:
                 laps = sess.laps.pick_drivers(drv).pick_wo_box().pick_quicklaps()
                 if laps.empty:
                     continue
-                
-                color = DRIVER_COLORS.get(drv, '#FFFFFF')
                 
                 lap_data = []
                 for idx, row in laps.iterrows():
@@ -85,25 +165,103 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
                         "LapTime": row['LapTime'].total_seconds()
                     })
                 
-                response_data.append({
+                full_cache_data["Drivers"][drv] = {
                     "Driver": drv,
-                    "Color": color,
                     "Laps": lap_data
-                })
+                }
             except Exception as e:
-                print(f"Error for driver {drv}: {e}")
+                print(f"Error caching race pace for driver {drv}: {e}")
                 continue
                 
-        return {"TotalLaps": total_laps, "Drivers": response_data}
+        # Write to R2 cache
+        set_json_cache(cache_key, full_cache_data)
+        
+        # Prepare response for requested drivers
+        response_drivers = []
+        for drv in driver_list:
+            if drv in full_cache_data["Drivers"]:
+                drv_data = full_cache_data["Drivers"][drv]
+                response_drivers.append({
+                    "Driver": drv,
+                    "Color": DRIVER_COLORS.get(drv, '#FFFFFF'),
+                    "Laps": drv_data["Laps"]
+                })
+                
+        return {"TotalLaps": total_laps, "Drivers": response_drivers}
 
     except Exception as e:
+        print(f"Race pace error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/telemetry")
 def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, lap1: str = 'fastest', lap2: str = 'fastest'):
     try:
+        key1 = f"telemetry/{year}/{gp}/{session}/{driver1}_{lap1}.json"
+        key2 = f"telemetry/{year}/{gp}/{session}/{driver2}_{lap2}.json"
+        
+        data1 = get_json_cache(key1)
+        data2 = get_json_cache(key2)
+        
+        # Check if both are cached
+        if data1 and data2:
+            print(f"Telemetry Cache Hit for {driver1} ({lap1}) and {driver2} ({lap2})")
+            
+            # Fetch corners from circuit corners cache if available; otherwise compute and cache them.
+            corners_key = f"circuit/{year}/{gp}/corners.json"
+            corners = get_json_cache(corners_key)
+            if not corners:
+                try:
+                    sess = fastf1.get_session(year, gp, session)
+                    sess.load(weather=False, messages=False)
+                    circuit_info = get_safe_circuit_info(sess)
+                    corners = extract_corners_from_circuit_info(circuit_info)
+                    if corners:
+                        set_json_cache(corners_key, corners)
+                except Exception as ce:
+                    print(f"Error fetching corners for cached hit: {ce}")
+                    corners = []
+
+            # Reconstruct Delta using NumPy interpolation
+            d1_telemetry = data1["Telemetry"]
+            d2_telemetry = data2["Telemetry"]
+            
+            d1_dist = [p["Distance"] for p in d1_telemetry]
+            d1_time = [p["Time"] for p in d1_telemetry]
+            
+            d2_dist = [p["Distance"] for p in d2_telemetry]
+            d2_time = [p["Time"] for p in d2_telemetry]
+            
+            delta_data = []
+            if d1_dist and d2_dist:
+                comp_time_interpolated = np.interp(d1_dist, d2_dist, d2_time)
+                delta = comp_time_interpolated - np.array(d1_time)
+                for i in range(len(d1_dist)):
+                    delta_data.append({
+                        "Distance": safe_float(d1_dist[i]),
+                        "Delta": safe_float(delta[i])
+                    })
+                    
+            return {
+                "Driver1": {
+                    "Name": driver1,
+                    "Color": DRIVER_COLORS.get(driver1, '#FFFFFF'),
+                    "Telemetry": d1_telemetry,
+                    "LapTime": data1["LapTime"]
+                },
+                "Driver2": {
+                    "Name": driver2,
+                    "Color": DRIVER_COLORS.get(driver2, '#FFFFFF'),
+                    "Telemetry": d2_telemetry,
+                    "LapTime": data2["LapTime"]
+                },
+                "Delta": delta_data,
+                "Corners": corners
+            }
+
+        # Cache Miss - load session from FastF1
+        print(f"Telemetry Cache Miss. Fetching from FastF1...")
         sess = fastf1.get_session(year, gp, session)
-        sess.load(weather=False, messages=False) # Load light
+        sess.load(weather=False, messages=False)
         
         # Helper to get lap
         def get_driver_lap(drv, lap_identifier):
@@ -111,13 +269,8 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
             if lap_identifier == 'fastest':
                 return d_laps.pick_fastest()
             else:
-                return d_laps.pick_laps(int(lap_identifier)).iloc[0] # pick_laps return slice?
-        
-        # Handle qualifying split? telTest has special logic for Q.
-        # But get_session works generally.
-        # If Q, we might need split_qualifying_sessions logic if we want specific Q session part.
-        # For simplicity, let's assume 'Q' loads the full quali session and we just pick fastest from it.
-        
+                return d_laps.pick_laps(int(lap_identifier)).iloc[0]
+                
         lap_d1 = get_driver_lap(driver1, lap1)
         lap_d2 = get_driver_lap(driver2, lap2)
         
@@ -128,52 +281,64 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
         delta_time, ref_tel, compare_tel = utils.delta_time(lap_d1, lap_d2)
         
         # Get Circuit Info (Corners)
-        circuit_info = sess.get_circuit_info()
-        corners = []
-        if circuit_info is not None:
-             for _, corner in circuit_info.corners.iterrows():
-                 corners.append({
-                     "Number": int(corner['Number']),
-                     "Distance": float(corner['Distance']),
-                     "Letter": corner['Letter'] if not pd.isna(corner['Letter']) else ""
-                 })
-        
-        # We need to structure this for the frontend.
-        # Option: Return one large array of objects merged by distance?
-        # Or separate arrays.
-        # Frontend likely wants to map X-axis (Distance) to Y-values.
-        # Since distances aren't identical steps, we might need to interpolation?
-        # Actually, Charts usually handle multiple series if X is same type.
-        # But for 'Delta', the X axis is ref_tel['Distance'].
-        
-        # Simplified: Return 3 series: Driver1 Tel, Driver2 Tel, Delta
-        
-        def process_tel(tel, drv_name):
+        corners_key = f"circuit/{year}/{gp}/corners.json"
+        corners = get_json_cache(corners_key)
+        if not corners:
+            try:
+                circuit_info = get_safe_circuit_info(sess)
+                corners = extract_corners_from_circuit_info(circuit_info)
+                if corners:
+                    set_json_cache(corners_key, corners)
+            except Exception as ce:
+                print(f"Error fetching/caching corners: {ce}")
+                corners = []
+                  
+        def process_tel(tel):
             data = []
             for i in range(len(tel)):
                 data.append({
-                    "Distance": float(tel['Distance'].iloc[i]),
-                    "Speed": float(tel['Speed'].iloc[i]),
-                    "Throttle": float(tel['Throttle'].iloc[i]),
-                    "Brake": float(tel['Brake'].iloc[i]),
-                    "RPM": float(tel['RPM'].iloc[i]),
-                    "nGear": int(tel['nGear'].iloc[i]),
-                    "DRS": int(tel['DRS'].iloc[i]),
-                    "Time": float(tel['Time'].iloc[i].total_seconds())
+                    "Distance": safe_float(tel['Distance'].iloc[i]),
+                    "Speed": safe_float(tel['Speed'].iloc[i]),
+                    "Throttle": safe_float(tel['Throttle'].iloc[i]),
+                    "Brake": safe_float(tel['Brake'].iloc[i]),
+                    "RPM": safe_float(tel['RPM'].iloc[i]),
+                    "nGear": int(tel['nGear'].iloc[i]) if not pd.isna(tel['nGear'].iloc[i]) else 0,
+                    "DRS": int(tel['DRS'].iloc[i]) if not pd.isna(tel['DRS'].iloc[i]) else 0,
+                    "Time": safe_float(tel['Time'].iloc[i].total_seconds())
                 })
             return data
             
-        d1_data = process_tel(tel_d1, driver1)
-        d2_data = process_tel(tel_d2, driver2)
+        d1_data = process_tel(tel_d1)
+        d2_data = process_tel(tel_d2)
         
         delta_data = []
         for i in range(len(delta_time)):
              delta_data.append({
-                 "Distance": float(ref_tel['Distance'].iloc[i]),
-                 "Delta": float(delta_time[i])
+                 "Distance": safe_float(ref_tel['Distance'].iloc[i]),
+                 "Delta": safe_float(delta_time[i])
              })
              
-
+        # Save cache files to R2
+        if not data1:
+            d1_cache = {
+                "Driver": driver1,
+                "LapNumber": lap1,
+                "LapTime": float(lap_d1['LapTime'].total_seconds()),
+                "Telemetry": d1_data
+            }
+            set_json_cache(key1, d1_cache)
+            
+        if not data2:
+            d2_cache = {
+                "Driver": driver2,
+                "LapNumber": lap2,
+                "LapTime": float(lap_d2['LapTime'].total_seconds()),
+                "Telemetry": d2_data
+            }
+            set_json_cache(key2, d2_cache)
+            
+        # No longer updating corners in session timing file since they are stored in a dedicated circuit-level cache
+            
         c1 = DRIVER_COLORS.get(driver1, '#FFFFFF')
         c2 = DRIVER_COLORS.get(driver2, '#FFFFFF')
         
@@ -217,7 +382,24 @@ def get_events(year: int = 2026):
             })
         return events
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Events error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/sessions")
+def get_sessions(year: int, gp: str):
+    try:
+        event = fastf1.get_event(year, gp)
+        sessions = []
+        for i in range(1, 6):
+            sess_name = event.get_session_name(i)
+            if sess_name:
+                key = SESSION_KEY_MAP.get(sess_name)
+                if key:
+                    sessions.append({"SessionName": sess_name, "SessionKey": key})
+        return sessions
+    except Exception as e:
+        print(f"Sessions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/drivers")
 def get_drivers(year: int, gp: str, sess_type: str):
@@ -227,4 +409,5 @@ def get_drivers(year: int, gp: str, sess_type: str):
         drivers = session.results[['Abbreviation', 'FullName']]
         return [{"Name": d[2], "Driver": d[1]} for d in drivers.itertuples()]
     except Exception as e:
-        return {"error": str(e)}
+        print(f"Drivers error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

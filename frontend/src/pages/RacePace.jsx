@@ -11,7 +11,8 @@ const RacePace = () => {
     const [events, setEvents] = useState([]);
 
     // Form State
-    const [year, setYear] = useState(2026);
+    const currentYear = new Date().getFullYear();
+    const [year, setYear] = useState(currentYear);
     const [gp, setGp] = useState('Australia');
     const [session, setSession] = useState('R');
     const [drivers, setDrivers] = useState('RUS, ANT, LEC, HAM');
@@ -75,27 +76,9 @@ const RacePace = () => {
 
             <div className="card" style={{ marginBottom: '24px' }}>
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'end' }}>
-                    <InputSelect
-                        label="Year"
-                        value={year}
-                        onChange={setYear}
-                        options={[2026, 2025, 2024, 2023].map(y => ({ label: y, value: y }))}
-                    />
-                    <InputSelect
-                        label="Grand Prix"
-                        value={gp}
-                        onChange={setGp}
-                        options={events.map(e => ({ label: e.EventName, value: e.EventName }))}
-                    />
-                    <InputSelect
-                        label="Session"
-                        value={session}
-                        onChange={setSession}
-                        options={[
-                            { label: 'Race', value: 'R' },
-                            { label: 'Sprint', value: 'S' }
-                        ]}
-                    />
+                    <InputSelect label="Year" value={year} onChange={setYear} options={Array.from({ length: currentYear - 2018 + 1 }, (_, i) => ({ label: String(currentYear - i), value: currentYear - i }))} />
+                    <InputSelect label="Grand Prix" value={gp} onChange={setGp} options={events.map(e => ({ label: e.EventName, value: e.EventName }))} />
+                    <InputSelect label="Session" value={session} onChange={setSession} options={[{ label: 'Race', value: 'R' }, { label: 'Sprint', value: 'S' }]} />
                     <div className="input-group" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Drivers (comma sep)</label>
                         <input

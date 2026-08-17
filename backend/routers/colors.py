@@ -218,7 +218,7 @@ TEAM_COLORS = {
 DRIVER_COLORS = {
     'NOR': '#D2FF00', 'PIA': '#FF8F00', 'RUS': '#00D2BE', 'ANT': '#ADD8E6',
     'VER': '#3671C6', 'TSU': '#1A2C80', 'LEC': '#DC0000', 'HAM': '#800080',
-    'ALB': '#FFCCC7', 'SAI': '#0082FA', 'HAD': '#12264F', 'LAW': '#F9F871',
+    'ALB': '#FFCCC7', 'SAI': '#0082FA', 'HAD': '#748099', 'LAW': '#F9F871',
     'ALO': '#006F62', 'STR': '#006F62', 'OCO': '#F7F7F7', 'BEA': '#FF007F',
     'HUL': '#39FF14', 'BOR': '#009739', 'GAS': '#4E90FF', 'COL': '#04299C',
     'LIN': '#1A2C80', 'BOT': '#FFFFFF', 'PER': '#FFFFFF'

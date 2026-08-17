@@ -15,6 +15,14 @@ if not os.path.exists(cache_dir):
     os.makedirs(cache_dir)
 fastf1.Cache.enable_cache(cache_dir)
 
+# Initialize R2 Cache Client
+from r2_client import get_r2_client, R2_BUCKET_NAME
+r2_client = get_r2_client()
+if r2_client:
+    print(f"Cloudflare R2 caching initialized successfully. Bucket: {R2_BUCKET_NAME}")
+else:
+    print("Warning: Cloudflare R2 caching is disabled. Credentials not configured in environment.")
+
 app = FastAPI()
 
 origins = [

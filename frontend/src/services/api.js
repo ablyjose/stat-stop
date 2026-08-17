@@ -10,6 +10,13 @@ export const getEvents = async (year = 2025) => {
     return response.data;
 };
 
+export const getSessions = async (year, gp) => {
+    const response = await api.get('/sessions', {
+        params: { year, gp }
+    });
+    return response.data;
+};
+
 export const getDrivers = async (year, gp, sess_type) => {
     const response = await api.get('/drivers', {
         params: { year, gp, sess_type }
