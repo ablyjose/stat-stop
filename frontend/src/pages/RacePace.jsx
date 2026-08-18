@@ -13,7 +13,7 @@ const RacePace = () => {
     // Form State
     const currentYear = new Date().getFullYear();
     const [year, setYear] = useState(currentYear);
-    const [gp, setGp] = useState('Australia');
+    const [gp, setGp] = useState('Australian Grand Prix');
     const [session, setSession] = useState('R');
     const [drivers, setDrivers] = useState('RUS, ANT, LEC, HAM');
 

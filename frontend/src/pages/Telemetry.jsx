@@ -108,7 +108,7 @@ const Telemetry = () => {
     // Form
     const currentYear = new Date().getFullYear();
     const [year, setYear] = useState(currentYear);
-    const [gp, setGp] = useState('Australia');
+    const [gp, setGp] = useState('Australian Grand Prix');
     const [driver1, setDriver1] = useState('RUS');
     const [driver2, setDriver2] = useState('ANT');
     const [lap1, setLap1] = useState('fastest');
