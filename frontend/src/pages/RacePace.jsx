@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getRacePace, getEvents } from '../services/api';
+import { getRacePace, getEvents, getSessions } from '../services/api';
 import ChartContainer from '../components/ChartContainer';
 import InputSelect from '../components/InputSelect';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -9,17 +9,28 @@ const RacePace = () => {
     const [totalLaps, setTotalLaps] = useState(0);
     const [loading, setLoading] = useState(false);
     const [events, setEvents] = useState([]);
+    const [sessions, setSessions] = useState([]);
+    const [session, setSession] = useState('R');
 
     // Form State
     const currentYear = new Date().getFullYear();
     const [year, setYear] = useState(currentYear);
     const [gp, setGp] = useState('Australian Grand Prix');
-    const [session, setSession] = useState('R');
     const [drivers, setDrivers] = useState('RUS, ANT, LEC, HAM');
 
     useEffect(() => {
         getEvents(year).then(setEvents).catch(console.error);
     }, [year]);
+
+    useEffect(() => {
+        getSessions(year, gp)
+            .then((data) => {
+                const raceSessions = (data || []).filter(s => s.SessionKey === 'R' || s.SessionKey === 'S');
+                setSessions(raceSessions);
+                setSession(prev => raceSessions.some(s => s.SessionKey === prev) ? prev : 'R');
+            })
+            .catch(console.error);
+    }, [year, gp]);
 
     const fetchData = async () => {
         setLoading(true);
@@ -78,7 +89,9 @@ const RacePace = () => {
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'end' }}>
                     <InputSelect label="Year" value={year} onChange={setYear} options={Array.from({ length: currentYear - 2018 + 1 }, (_, i) => ({ label: String(currentYear - i), value: currentYear - i }))} />
                     <InputSelect label="Grand Prix" value={gp} onChange={setGp} options={events.map(e => ({ label: e.EventName, value: e.EventName }))} />
-                    <InputSelect label="Session" value={session} onChange={setSession} options={[{ label: 'Race', value: 'R' }, { label: 'Sprint', value: 'S' }]} />
+                    {sessions.length > 1 && (
+                        <InputSelect label="Session" value={session} onChange={setSession} options={sessions.map(s => ({ label: s.SessionName, value: s.SessionKey }))} />
+                    )}
                     <div className="input-group" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Drivers (comma sep)</label>
                         <input
