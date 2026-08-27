@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { getRacePace, getEvents, getSessions } from '../services/api';
+import { getRacePace, getEvents, getSessions, getDrivers } from '../services/api';
 import ChartContainer from '../components/ChartContainer';
 import InputSelect from '../components/InputSelect';
+import MultiSelect from '../components/MultiSelect';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const RacePace = () => {
@@ -11,12 +12,13 @@ const RacePace = () => {
     const [events, setEvents] = useState([]);
     const [sessions, setSessions] = useState([]);
     const [session, setSession] = useState('R');
+    const [driversList, setDriversList] = useState([]);
+    const [selectedDrivers, setSelectedDrivers] = useState(['RUS', 'ANT', 'LEC', 'HAM']);
 
     // Form State
     const currentYear = new Date().getFullYear();
     const [year, setYear] = useState(currentYear);
     const [gp, setGp] = useState('Australian Grand Prix');
-    const [drivers, setDrivers] = useState('RUS, ANT, LEC, HAM');
 
     useEffect(() => {
         getEvents(year).then(setEvents).catch(console.error);
@@ -32,10 +34,26 @@ const RacePace = () => {
             .catch(console.error);
     }, [year, gp]);
 
+    useEffect(() => {
+        if (!session) return;
+        getDrivers(year, gp, session)
+            .then((data = []) => {
+                setDriversList(data);
+                const availableCodes = new Set(data.map(d => d.Driver));
+                setSelectedDrivers(prev => {
+                    const valid = prev.filter(c => availableCodes.has(c));
+                    return valid.length ? valid : data.slice(0, 4).map(d => d.Driver);
+                });
+            })
+            .catch(console.error);
+    }, [year, gp, session]);
+
     const fetchData = async () => {
+        if (selectedDrivers.length === 0) return;
         setLoading(true);
         try {
-            const result = await getRacePace(year, gp, session, drivers);
+            const driverQuery = selectedDrivers.join(', ');
+            const result = await getRacePace(year, gp, session, driverQuery);
             setData(result.Drivers || []);
             setTotalLaps(result.TotalLaps || 0);
         } catch (err) {
@@ -92,25 +110,20 @@ const RacePace = () => {
                     {sessions.length > 1 && (
                         <InputSelect label="Session" value={session} onChange={setSession} options={sessions.map(s => ({ label: s.SessionName, value: s.SessionKey }))} />
                     )}
-                    <div className="input-group" style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <label style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>Drivers (comma sep)</label>
-                        <input
-                            type="text"
-                            value={drivers}
-                            onChange={(e) => setDrivers(e.target.value)}
-                            style={{
-                                background: 'var(--bg-surface-hover)',
-                                border: '1px solid var(--border-color)',
-                                color: 'var(--text-primary)',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                outline: 'none',
-                                minWidth: '200px',
-                                fontFamily: 'inherit'
-                            }}
-                        />
-                    </div>
-                    <button className="btn btn-primary" onClick={fetchData} disabled={loading}>
+                    <MultiSelect
+                        label="Drivers"
+                        value={selectedDrivers}
+                        onChange={setSelectedDrivers}
+                        placeholder="Select drivers..."
+                        options={driversList.map((d, index) => ({
+                            value: d.Driver,
+                            label: `${d.Driver} - ${d.Name}`,
+                            shortLabel: d.Driver,
+                            title: d.Name,
+                            position: index + 1
+                        }))}
+                    />
+                    <button className="btn btn-primary" onClick={fetchData} disabled={loading || selectedDrivers.length === 0}>
                         {loading ? 'Analyze...' : 'Analyze'}
                     </button>
                 </div>
