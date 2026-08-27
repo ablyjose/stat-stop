@@ -191,7 +191,7 @@ const Telemetry = () => {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                <ChartContainer title="Time Delta" height={250}>
+                <ChartContainer title="Time Delta (positive: Driver 1 ahead)" height={250}>
                     {data && data.Delta ? (
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={data.Delta}>
@@ -201,7 +201,7 @@ const Telemetry = () => {
                                 <Tooltip
                                     contentStyle={{ backgroundColor: '#1e1e1e', borderColor: '#333' }}
                                     labelFormatter={(v) => `Dist: ${Math.round(v)}m`}
-                                    formatter={(value) => Number(value).toFixed(3)}
+                                    formatter={(value) => [`${Number(value).toFixed(3)} s`, Number(value) > 0 ? `${data.Driver1.Name} ahead` : Number(value) < 0 ? `${data.Driver2.Name} ahead` : 'Equal time']}
                                 />
                                 <ReferenceLine y={0} stroke={data.Driver1.Color} strokeWidth={0.75} />
                                 {data.Corners && data.Corners.map((corner, idx) => (
@@ -218,7 +218,7 @@ const Telemetry = () => {
                                         }}
                                     />
                                 ))}
-                                <Line type="monotone" dataKey="Delta" stroke={data.Driver2.Color} dot={false} strokeWidth={2} name={`Gap to ${data.Driver1.Name}`} />
+                                <Line type="monotone" dataKey="Delta" stroke={data.Driver2.Color} dot={false} strokeWidth={2} name={`${data.Driver2.Name} time − ${data.Driver1.Name} time`} />
                             </LineChart>
                         </ResponsiveContainer>
                     ) : <div className="placeholder-text">Load data to view</div>}

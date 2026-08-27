@@ -31,6 +31,13 @@ R2_ACCESS_KEY_ID = _get_config_value("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = _get_config_value("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = _get_config_value("R2_BUCKET_NAME")
 
+TELEMETRY_CACHE_REVISION = "v3"
+
+
+def telemetry_cache_key(year: int, gp: str, session: str, driver: str, lap: str) -> str:
+    """Build the current-version cache key for one driver's lap telemetry."""
+    return f"telemetry/{TELEMETRY_CACHE_REVISION}/{year}/{gp}/{session}/{driver}_{lap}.json"
+
 def get_r2_client():
     if not all([R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
         return None
