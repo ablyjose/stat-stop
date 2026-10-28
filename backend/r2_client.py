@@ -1,5 +1,6 @@
 import os
 import math
+import time
 import boto3
 import json
 from pathlib import Path
@@ -38,6 +39,53 @@ def telemetry_cache_key(year: int, gp: str, session: str, driver: str, lap: str)
     """Build the current-version cache key for one driver's lap telemetry."""
     return f"telemetry/{TELEMETRY_CACHE_REVISION}/{year}/{gp}/{session}/{driver}_{lap}.json"
 
+
+def telemetry_completion_key(year: int, gp: str, session: str) -> str:
+    """Only trust markers written after every driver upload succeeded."""
+    return f"telemetry/{TELEMETRY_CACHE_REVISION}/{year}/{gp}/{session}/_complete-v2.json"
+
+
+def valid_race_pace(data):
+    """Reject empty or malformed timing indexes so they can be rebuilt."""
+    if not isinstance(data, dict) or safe_float(data.get("TotalLaps")) <= 0:
+        return False
+    drivers = data.get("Drivers")
+    if not isinstance(drivers, dict) or not drivers:
+        return False
+    for driver in drivers.values():
+        if not isinstance(driver, dict):
+            return False
+        laps = driver.get("Laps")
+        if not isinstance(laps, list) or not laps:
+            return False
+        if any(not isinstance(lap, dict)
+               or safe_float(lap.get("LapNumber")) <= 0
+               or safe_float(lap.get("LapTime")) <= 0 for lap in laps):
+            return False
+    return True
+
+
+def read_circuit_corners(data):
+    """Read legacy lists and expiring unavailable-map records; None is a miss."""
+    if isinstance(data, dict):
+        if data.get("Corners") != [] or safe_float(data.get("RetryAfter")) <= time.time():
+            return None
+        return []
+    if not isinstance(data, list) or not data:
+        return None
+    for corner in data:
+        if (not isinstance(corner, dict)
+                or safe_float(corner.get("Number")) <= 0
+                or safe_float(corner.get("Distance"), -1) < 0
+                or not isinstance(corner.get("Letter"), str)):
+            return None
+    return data
+
+
+def circuit_corners_payload(corners):
+    """Retry missing optional maps after one day instead of on every request."""
+    return corners if corners else {"Corners": [], "RetryAfter": time.time() + 86400}
+
 def get_r2_client():
     if not all([R2_ENDPOINT_URL, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
         return None
@@ -47,7 +95,8 @@ def get_r2_client():
             endpoint_url=R2_ENDPOINT_URL,
             aws_access_key_id=R2_ACCESS_KEY_ID,
             aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-            config=Config(signature_version="s3v4")
+            config=Config(signature_version="s3v4", connect_timeout=10,
+                          read_timeout=30, retries={"max_attempts": 2})
         )
     except Exception as e:
         print(f"Error initializing R2 client: {e}")
@@ -59,7 +108,10 @@ def get_json_cache(key: str):
         return None
     try:
         response = client.get_object(Bucket=R2_BUCKET_NAME, Key=key)
-        return json.loads(response['Body'].read().decode('utf-8'))
+        try:
+            return json.loads(response['Body'].read().decode('utf-8'))
+        finally:
+            response['Body'].close()
     except ClientError as e:
         if e.response['Error']['Code'] != 'NoSuchKey':
             print(f"Error reading cache for key {key}: {e}")
@@ -90,7 +142,7 @@ def set_json_cache(key: str, data: dict):
         client.put_object(
             Bucket=R2_BUCKET_NAME,
             Key=key,
-            Body=json.dumps(sanitized),
+            Body=json.dumps(sanitized, allow_nan=False),
             ContentType='application/json'
         )
         return True
@@ -106,7 +158,7 @@ def check_cache_exists(key: str):
         client.head_object(Bucket=R2_BUCKET_NAME, Key=key)
         return True
     except ClientError as e:
-        return False
-    except Exception as e:
+        if e.response['Error']['Code'] not in ('NoSuchKey', '404', 'NotFound'):
+            raise
         return False
 

@@ -261,7 +261,7 @@ const MultiSelect = ({
                                 No drivers found
                             </div>
                         ) : (
-                            filteredOptions.map((opt, idx) => {
+                            filteredOptions.map((opt) => {
                                 const isSelected = value.includes(opt.value);
                                 return (
                                     <div

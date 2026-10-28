@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-fastf1
+fastf1>=3.9,<3.10
 pandas
 numpy
 requests

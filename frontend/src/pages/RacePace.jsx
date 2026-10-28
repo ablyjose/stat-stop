@@ -9,6 +9,7 @@ const RacePace = () => {
     const [data, setData] = useState([]);
     const [totalLaps, setTotalLaps] = useState(0);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
     const [events, setEvents] = useState([]);
     const [sessions, setSessions] = useState([]);
     const [session, setSession] = useState('R');
@@ -21,23 +22,36 @@ const RacePace = () => {
     const [gp, setGp] = useState('Australian Grand Prix');
 
     useEffect(() => {
-        getEvents(year).then(setEvents).catch(console.error);
+        let active = true;
+        getEvents(year).then(result => {
+            if (!active) return;
+            setEvents(result);
+            setGp(previous => result.some(event => event.EventName === previous)
+                ? previous : (result[0]?.EventName || ''));
+        }).catch(console.error);
+        return () => { active = false; };
     }, [year]);
 
     useEffect(() => {
+        if (!gp) return;
+        let active = true;
         getSessions(year, gp)
             .then((data) => {
+                if (!active) return;
                 const raceSessions = (data || []).filter(s => s.SessionKey === 'R' || s.SessionKey === 'S');
                 setSessions(raceSessions);
                 setSession(prev => raceSessions.some(s => s.SessionKey === prev) ? prev : 'R');
             })
             .catch(console.error);
+        return () => { active = false; };
     }, [year, gp]);
 
     useEffect(() => {
-        if (!session) return;
+        if (!session || !gp) return;
+        let active = true;
         getDrivers(year, gp, session)
             .then((data = []) => {
+                if (!active) return;
                 setDriversList(data);
                 const availableCodes = new Set(data.map(d => d.Driver));
                 setSelectedDrivers(prev => {
@@ -46,11 +60,13 @@ const RacePace = () => {
                 });
             })
             .catch(console.error);
+        return () => { active = false; };
     }, [year, gp, session]);
 
     const fetchData = async () => {
         if (selectedDrivers.length === 0) return;
         setLoading(true);
+        setError('');
         try {
             const driverQuery = selectedDrivers.join(', ');
             const result = await getRacePace(year, gp, session, driverQuery);
@@ -58,6 +74,8 @@ const RacePace = () => {
             setTotalLaps(result.TotalLaps || 0);
         } catch (err) {
             console.error(err);
+            setData([]);
+            setError(err.response?.data?.detail || 'Could not load race pace. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -68,10 +86,10 @@ const RacePace = () => {
     // For race pace, laps usually align. Let's merge them for the Tooltip to work nicely.
 
     const processDataForChart = () => {
-        if (!data.length) return { chartData: [] };
+        if (!data.length) return [];
 
         // Use total laps from the session (covers full race distance including safety car laps)
-        const maxLaps = totalLaps > 0 ? totalLaps : Math.max(...data.map(d => d.Laps.length));
+        const maxLaps = totalLaps > 0 ? totalLaps : Math.max(0, ...data.flatMap(d => d.Laps.map(lap => lap.LapNumber)));
         const chartData = [];
 
         for (let i = 1; i <= maxLaps; i++) {
@@ -129,6 +147,7 @@ const RacePace = () => {
                 </div>
             </div>
 
+            {error && <p role="alert">{error}</p>}
             <ChartContainer title={`Lap Times Comparison - ${gp} ${year}`} height={600}>
                 {chartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">

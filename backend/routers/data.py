@@ -1,19 +1,18 @@
 from fastapi import APIRouter, HTTPException
 from urllib.request import urlopen
-from urllib.error import HTTPError
 import json
 import pandas as pd
 import numpy as np
 import fastf1
-import time
-from datetime import date
-from pathlib import Path
-import os
 from .colors import TEAM_COLORS, DRIVER_COLORS
 try:
-    from ..r2_client import get_json_cache, set_json_cache, safe_float, telemetry_cache_key
+    from ..telemetry import calculate_telemetry_delta, get_lap_telemetry
+    from ..r2_client import (get_json_cache, set_json_cache, safe_float, telemetry_cache_key,
+                             valid_race_pace, read_circuit_corners, circuit_corners_payload)
 except ImportError:  # Supports running the backend directly from its directory.
-    from r2_client import get_json_cache, set_json_cache, safe_float, telemetry_cache_key
+    from telemetry import calculate_telemetry_delta, get_lap_telemetry
+    from r2_client import (get_json_cache, set_json_cache, safe_float, telemetry_cache_key,
+                           valid_race_pace, read_circuit_corners, circuit_corners_payload)
 from fastf1.mvapi import get_circuit_info as mvapi_get_circuit_info
 
 
@@ -26,7 +25,7 @@ def extract_corners_from_circuit_info(circuit_info):
     try:
         for _, corner in circuit_info.corners.iterrows():
             distance_value = corner['Distance']
-            if pd.isna(distance_value):
+            if not np.isfinite(distance_value):
                 continue
             corners.append({
                 "Number": int(corner['Number']),
@@ -49,6 +48,8 @@ def get_safe_circuit_info(sess):
     try:
         c_key = sess.session_info['Meeting']['Circuit']['Key']
         circuit_info = mvapi_get_circuit_info(year=sess.event.year, circuit_key=c_key)
+        if circuit_info is None:
+            return None
         
         # Search for any lap in the session that has valid telemetry
         for _, lap in sess.laps.iterrows():
@@ -65,7 +66,7 @@ def get_safe_circuit_info(sess):
         return circuit_info
     except Exception as ex:
         print(f"Error in get_safe_circuit_info fallback: {ex}")
-        return None
+        raise RuntimeError("Circuit source is unavailable") from ex
 
 router = APIRouter()
 
@@ -80,50 +81,13 @@ SESSION_KEY_MAP = {
     'Race': 'R',
 }
 
-def calculate_telemetry_delta(driver1_telemetry, driver2_telemetry):
-    """Reproduce FastF1's scaled-distance delta calculation from cached data."""
-    def series(telemetry, label):
-        if not isinstance(telemetry, list) or len(telemetry) < 2:
-            raise ValueError(f"{label} telemetry must contain at least two samples")
-        try:
-            distances = np.asarray([point["Distance"] for point in telemetry], dtype=float)
-            times = np.asarray([point["Time"] for point in telemetry], dtype=float)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"{label} telemetry samples require numeric Distance and Time values") from exc
-        if not np.isfinite(distances).all() or not np.isfinite(times).all():
-            raise ValueError(f"{label} telemetry contains non-finite Distance or Time values")
-        if not np.all(np.diff(distances) > 0):
-            raise ValueError(f"{label} telemetry Distance values must be strictly increasing")
-        if not np.all(np.diff(times) >= 0):
-            raise ValueError(f"{label} telemetry Time values must be nondecreasing")
-        return distances, times
-
-    d1_distances, d1_times = series(driver1_telemetry, "Driver 1")
-    d2_distances, d2_times = series(driver2_telemetry, "Driver 2")
-    distance_multiplier = d1_distances[-1] / d2_distances[-1]
-    scaled_d2_distances = d2_distances * distance_multiplier
-    padded_d2_distances = np.concatenate((
-        [scaled_d2_distances[0] - (scaled_d2_distances[1] - scaled_d2_distances[0])],
-        scaled_d2_distances,
-        [scaled_d2_distances[-1] + (scaled_d2_distances[-1] - scaled_d2_distances[-2])],
-    ))
-    padded_d2_times = np.concatenate((
-        [d2_times[0] - (d2_times[1] - d2_times[0])], d2_times,
-        [d2_times[-1] + (d2_times[-1] - d2_times[-2])],
-    ))
-    interpolated_d2_times = np.interp(d1_distances, padded_d2_distances, padded_d2_times)
-    return [
-        {"Distance": float(distance), "Delta": float(delta)}
-        for distance, delta in zip(d1_distances, interpolated_d2_times - d1_times)
-    ]
-
 @router.get("/standings")
 def get_standings(year: int):
     try:
         url = f"https://api.jolpi.ca/ergast/f1/{year}/driverStandings.json"
         
-        response = urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
+        with urlopen(url, timeout=30) as response:
+            data = json.loads(response.read().decode('utf-8'))
         
         standings_list = data.get('MRData', {}).get('StandingsTable', {}).get('StandingsLists', [])
         if not standings_list:
@@ -160,7 +124,7 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
         cache_key = f"timing/{year}/{gp}/{session}/laps.json"
         cached_data = get_json_cache(cache_key)
         
-        if cached_data:
+        if valid_race_pace(cached_data):
             print(f"Race Pace Cache Hit for {year} {gp} {session}")
             response_drivers = []
             for drv in driver_list:
@@ -177,8 +141,6 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
         sess = fastf1.get_session(year, gp, session)
         sess.load(messages=False, weather=False, telemetry=False)
         
-        response_data = []
-
         # Get the total number of laps in the session
         total_laps = int(sess.laps['LapNumber'].max()) if not sess.laps.empty else 0
 
@@ -189,6 +151,7 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
             "TotalLaps": total_laps,
             "Drivers": {}
         }
+        failed_drivers = []
 
         for drv in all_drivers:
             try:
@@ -198,19 +161,26 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
                 
                 lap_data = []
                 for idx, row in laps.iterrows():
+                    if pd.isna(row['LapTime']) or pd.isna(row['LapNumber']):
+                        continue
                     lap_data.append({
                         "LapNumber": int(row['LapNumber']),
                         "LapTime": row['LapTime'].total_seconds()
                     })
                 
+                if not lap_data:
+                    continue
                 full_cache_data["Drivers"][drv] = {
                     "Driver": drv,
                     "Laps": lap_data
                 }
             except Exception as e:
                 print(f"Error caching race pace for driver {drv}: {e}")
+                failed_drivers.append(drv)
                 continue
                 
+        if failed_drivers or not valid_race_pace(full_cache_data):
+            raise HTTPException(status_code=503, detail="Lap timing is unavailable from FastF1. Check source access and authentication.")
         # Write to R2 cache
         set_json_cache(cache_key, full_cache_data)
         
@@ -227,6 +197,8 @@ def get_race_pace(year: int, gp: str, session: str, drivers: str):
                 
         return {"TotalLaps": total_laps, "Drivers": response_drivers}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Race pace error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -246,10 +218,18 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
 
             def get_driver_lap(driver, lap_identifier):
                 driver_laps = sess.laps.pick_drivers(driver)
-                return driver_laps.pick_fastest() if lap_identifier == "fastest" else driver_laps.pick_laps(int(lap_identifier)).iloc[0]
-
-            lap_d1 = get_driver_lap(driver1, lap1)
-            lap_d2 = get_driver_lap(driver2, lap2)
+                if lap_identifier == "fastest":
+                    lap = driver_laps.pick_fastest()
+                    if lap is None:
+                        raise HTTPException(status_code=404, detail=f"No timed lap available for {driver}.")
+                    return lap
+                lap_number = int(lap_identifier)
+                if lap_number <= 0:
+                    raise ValueError("Lap number must be positive")
+                laps = driver_laps.pick_laps(lap_number)
+                if laps.empty:
+                    raise HTTPException(status_code=404, detail=f"Lap {lap_number} is unavailable for {driver}.")
+                return laps.iloc[0]
 
             def process_tel(tel):
                 return [{
@@ -263,20 +243,21 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
                     "Time": float(tel["Time"].iloc[i].total_seconds()),
                 } for i in range(len(tel))]
 
-            data1 = {
-                "Driver": driver1,
-                "LapNumber": lap1,
-                "LapTime": float(lap_d1["LapTime"].total_seconds()),
-                "Telemetry": process_tel(lap_d1.get_telemetry().add_distance()),
-            }
-            data2 = {
-                "Driver": driver2,
-                "LapNumber": lap2,
-                "LapTime": float(lap_d2["LapTime"].total_seconds()),
-                "Telemetry": process_tel(lap_d2.get_telemetry().add_distance()),
-            }
-            set_json_cache(key1, data1)
-            set_json_cache(key2, data2)
+            def load_driver(driver, lap_identifier, key):
+                lap = get_driver_lap(driver, lap_identifier)
+                telemetry = process_tel(get_lap_telemetry(lap))
+                calculate_telemetry_delta(telemetry, telemetry)
+                lap_time = lap["LapTime"]
+                result = {
+                    "Driver": driver, "LapNumber": lap_identifier,
+                    "LapTime": safe_float(lap_time.total_seconds(), None) if pd.notna(lap_time) else None,
+                    "Telemetry": telemetry,
+                }
+                set_json_cache(key, result)
+                return result
+
+            data1 = data1 or load_driver(driver1, lap1, key1)
+            data2 = data2 or load_driver(driver2, lap2, key2)
         else:
             print(f"Telemetry Cache Hit for {driver1} ({lap1}) and {driver2} ({lap2})")
 
@@ -285,15 +266,14 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
         delta_data = calculate_telemetry_delta(d1_telemetry, d2_telemetry)
 
         corners_key = f"circuit/{year}/{gp}/corners.json"
-        corners = get_json_cache(corners_key)
-        if not corners:
+        corners = read_circuit_corners(get_json_cache(corners_key))
+        if corners is None:
             try:
                 if "sess" not in locals():
                     sess = fastf1.get_session(year, gp, session)
                     sess.load(weather=False, messages=False)
                 corners = extract_corners_from_circuit_info(get_safe_circuit_info(sess))
-                if corners:
-                    set_json_cache(corners_key, corners)
+                set_json_cache(corners_key, circuit_corners_payload(corners))
             except Exception as error:
                 print(f"Error fetching/caching corners: {error}")
                 corners = []
@@ -306,6 +286,8 @@ def get_telemetry(year: int, gp: str, session: str, driver1: str, driver2: str, 
             "DeltaConvention": "Driver2 elapsed time - Driver1 elapsed time using FastF1-style distance scaling; positive means Driver1 is ahead.",
             "DeltaReferenceDriver": driver1,
         }
+    except HTTPException:
+        raise
     except ValueError as error:
         print(f"Invalid telemetry input for {key1} or {key2}: {error}")
         raise HTTPException(status_code=422, detail=f"Invalid telemetry data: {error}")

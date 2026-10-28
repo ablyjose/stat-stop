@@ -100,6 +100,7 @@ const TelemetryChart = React.memo(({ data, title, dataKey, yLabel, syncId = "tel
 const Telemetry = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
     const [events, setEvents] = useState([]);
     const [sessions, setSessions] = useState([]);
     const [session, setSession] = useState('Q');
@@ -115,12 +116,22 @@ const Telemetry = () => {
     const [lap2, setLap2] = useState('fastest');
 
     useEffect(() => {
-        getEvents(year).then(setEvents).catch(console.error);
+        let active = true;
+        getEvents(year).then(result => {
+            if (!active) return;
+            setEvents(result);
+            setGp(previous => result.some(event => event.EventName === previous)
+                ? previous : (result[0]?.EventName || ''));
+        }).catch(console.error);
+        return () => { active = false; };
     }, [year]);
 
     useEffect(() => {
+        if (!gp) return;
+        let active = true;
         getSessions(year, gp)
             .then((data) => {
+                if (!active) return;
                 if (Array.isArray(data)) {
                     setSessions(data);
                     const keys = data.map(s => s.SessionKey).filter(Boolean);
@@ -130,16 +141,25 @@ const Telemetry = () => {
                 }
             })
             .catch(console.error);
+        return () => { active = false; };
     }, [year, gp]);
 
     useEffect(() => {
-        if (session) {
-            getDrivers(year, gp, session).then(setDrivers).catch(console.error);
-        }
+        if (!session || !gp) return;
+        let active = true;
+        getDrivers(year, gp, session).then(result => {
+            if (!active) return;
+            setDrivers(result);
+            const codes = result.map(driver => driver.Driver);
+            setDriver1(previous => codes.includes(previous) ? previous : (codes[0] || ''));
+            setDriver2(previous => codes.includes(previous) ? previous : (codes[1] || codes[0] || ''));
+        }).catch(console.error);
+        return () => { active = false; };
     }, [year, gp, session]);
 
     const fetchData = async () => {
         setLoading(true);
+        setError('');
         try {
             const finalLap1 = lap1.trim() || 'fastest';
             const finalLap2 = lap2.trim() || 'fastest';
@@ -147,6 +167,8 @@ const Telemetry = () => {
             setData(result);
         } catch (err) {
             console.error(err);
+            setData(null);
+            setError(err.response?.data?.detail || 'Could not load telemetry. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -184,12 +206,13 @@ const Telemetry = () => {
                         </div>
                     </div>
 
-                    <button className="btn btn-primary" onClick={fetchData} disabled={loading}>
+                    <button className="btn btn-primary" onClick={fetchData} disabled={loading || !driver1 || !driver2}>
                         {loading ? 'Loading...' : 'Compare'}
                     </button>
                 </div>
             </div>
 
+            {error && <p role="alert">{error}</p>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <ChartContainer title="Time Delta (positive: Driver 1 ahead)" height={250}>
                     {data && data.Delta ? (

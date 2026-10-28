@@ -2,8 +2,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import fastf1
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 
-from routers import data
+load_dotenv(Path(__file__).with_name('.env'))
+
+if __package__:
+    from .routers import data
+    from .r2_client import get_r2_client, R2_BUCKET_NAME
+else:
+    from routers import data
+    from r2_client import get_r2_client, R2_BUCKET_NAME
 
 # Setup Cache - Use /tmp on Vercel (read-only filesystem except /tmp)
 if os.environ.get('VERCEL'):
@@ -11,12 +20,10 @@ if os.environ.get('VERCEL'):
 else:
     cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache')
 
-if not os.path.exists(cache_dir):
-    os.makedirs(cache_dir)
-fastf1.Cache.enable_cache(cache_dir)
+os.makedirs(cache_dir, exist_ok=True)
+fastf1.Cache.configure(cache_dir=cache_dir)
 
 # Initialize R2 Cache Client
-from r2_client import get_r2_client, R2_BUCKET_NAME
 r2_client = get_r2_client()
 if r2_client:
     print(f"Cloudflare R2 caching initialized successfully. Bucket: {R2_BUCKET_NAME}")
