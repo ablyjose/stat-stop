@@ -1,9 +1,9 @@
 $ScriptRoot = $PSScriptRoot
-$PythonPath = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+$PythonPath = (Get-Command python -CommandType Application -ErrorAction Stop).Path
 
 # Start Backend
 Write-Host "Starting Backend..."
-Start-Process -FilePath $PythonPath -WorkingDirectory $ScriptRoot -ArgumentList '-m', 'uvicorn', 'backend.main:app', '--reload', '--port', '8000' -WindowStyle Hidden
+Start-Process -FilePath $PythonPath[0] -WorkingDirectory $ScriptRoot -ArgumentList '-m', 'uvicorn', 'backend.main:app', '--reload', '--port', '8000' -WindowStyle Hidden
 
 # Start Frontend
 Write-Host "Starting Frontend..."
