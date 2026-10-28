@@ -91,6 +91,74 @@ def test_pick_telemetry_lap_falls_back_when_driver_has_no_fastest_lap():
     assert module.pick_telemetry_lap(driver_laps) is fallback_lap
 
 
+def test_qualifying_selection_ignores_personal_best_flag_and_deleted_laps():
+    from fastf1.core import Laps
+    from backend.telemetry import pick_driver_fastest_lap
+
+    def segment(times, deleted, personal_best):
+        return Laps(pd.DataFrame({
+            'Driver': ['LEC'] * len(times), 'DriverNumber': ['16'] * len(times),
+            'LapTime': pd.to_timedelta(times, unit='s'),
+            'Deleted': deleted, 'IsPersonalBest': personal_best,
+        }))
+
+    session = MagicMock()
+    session.name = 'Qualifying'
+    session.laps.split_qualifying_sessions.return_value = [
+        None, segment([94.198], [False], [True]),
+        segment([94.1, 94.267, 94.4], [True, False, False], [False, False, False]),
+    ]
+    lap = pick_driver_fastest_lap(session, 'LEC')
+    assert lap['LapTime'] == pd.Timedelta(94.267, unit='s')
+
+
+def test_prepopulate_qualifying_uses_each_drivers_latest_timed_segment():
+    def make_lap(seconds):
+        lap = MagicMock()
+        lap.__getitem__.side_effect = lambda key: pd.Timedelta(seconds=seconds) if key == 'LapTime' else None
+        lap.get_telemetry.return_value.add_distance.return_value = pd.DataFrame({
+            'Distance': [0., 100.], 'Time': pd.to_timedelta([0, 1], unit='s'),
+            'Speed': [100, 100], 'Throttle': [100, 100], 'Brake': [0, 0],
+            'RPM': [10000, 10000], 'nGear': [4, 4], 'DRS': [0, 0],
+        })
+        return lap
+
+    q2_lec = make_lap(94.198)
+    q3_lec = make_lap(94.267)
+    q2_law = make_lap(95.058)
+
+    def segment(laps):
+        result = MagicMock()
+        result.empty = False
+        def for_driver(driver):
+            driver_laps = MagicMock()
+            driver_laps.empty = driver not in laps
+            driver_laps.pick_fastest.return_value = laps.get(driver)
+            return driver_laps
+        result.pick_drivers.side_effect = for_driver
+        return result
+
+    session = MagicMock()
+    session.name = 'Qualifying'
+    session.laps.empty = False
+    session.laps.__getitem__.return_value = pd.Series(['LEC', 'LAW'])
+    session.laps.pick_drivers.return_value.empty = False
+    session.laps.split_qualifying_sessions.return_value = [
+        segment({}), segment({'LEC': q2_lec, 'LAW': q2_law}), segment({'LEC': q3_lec})
+    ]
+
+    cache = {}
+    with patch.object(module, 'check_cache_exists', return_value=False), \
+         patch.object(module, 'get_json_cache', return_value=None), \
+         patch.object(module.fastf1, 'get_session', return_value=session), \
+         patch.object(module, 'set_json_cache', side_effect=lambda key, value: cache.update({key: value}) or True):
+        assert module.prepopulate_session_telemetry(2026, 'United States Grand Prix', 'Q') is True
+
+    session.load.assert_called_once_with(weather=False, messages=True)
+    assert cache[module.telemetry_cache_key(2026, 'United States Grand Prix', 'Q', 'LEC', 'fastest')]['LapTime'] == 94.267
+    assert cache[module.telemetry_cache_key(2026, 'United States Grand Prix', 'Q', 'LAW', 'fastest')]['LapTime'] == 95.058
+
+
 def test_extract_lap_time_handles_one_row_laps_with_nat():
     retired_driver_laps = pd.DataFrame({"LapTime": [pd.NaT]})
 

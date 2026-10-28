@@ -32,7 +32,7 @@ R2_ACCESS_KEY_ID = _get_config_value("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = _get_config_value("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = _get_config_value("R2_BUCKET_NAME")
 
-TELEMETRY_CACHE_REVISION = "v3"
+TELEMETRY_CACHE_REVISION = "v4"
 
 
 def telemetry_cache_key(year: int, gp: str, session: str, driver: str, lap: str) -> str:

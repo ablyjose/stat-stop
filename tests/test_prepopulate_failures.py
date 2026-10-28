@@ -45,7 +45,7 @@ def test_failed_driver_upload_does_not_publish_completion_marker():
     })
     with patch.object(prepopulate, 'check_cache_exists', return_value=False), \
          patch.object(prepopulate.fastf1, 'get_session', return_value=session), \
-         patch.object(prepopulate, 'pick_telemetry_lap', return_value=lap), \
+         patch.object(prepopulate, 'pick_driver_fastest_lap', return_value=lap), \
          patch.object(prepopulate, 'extract_lap_time', return_value=90.), \
          patch.object(prepopulate, 'set_json_cache', return_value=False) as save:
         assert prepopulate.prepopulate_session_telemetry(2026, 'Spanish Grand Prix', 'Q') is False
@@ -59,11 +59,9 @@ def test_upload_failure_raises():
             prepopulate.save_cache('timing/test', {})
 
 
-def test_weekend_requires_qualifying_telemetry_too():
-    pace = {'TotalLaps': 57, 'Drivers': {'NOR': {'Laps': [{'LapNumber': 1, 'LapTime': 90}]}}}
-    with patch.object(auto, 'get_json_cache', return_value=pace), \
-         patch.object(auto, 'check_cache_exists', side_effect=lambda key: '/R/' in key):
-        assert auto.check_is_prepopulated(2026, 'Spanish Grand Prix', ['R', 'Q']) is False
+def test_scheduler_accepts_existing_race_without_new_telemetry_markers():
+    with patch.object(auto, 'check_cache_exists', side_effect=lambda key: key == 'timing/2026/Spanish Grand Prix/R/laps.json'):
+        assert auto.check_is_prepopulated(2026, 'Spanish Grand Prix', ['R', 'Q']) is True
 
 
 def test_legacy_completion_marker_is_not_trusted():
@@ -74,6 +72,7 @@ def test_legacy_completion_marker_is_not_trusted():
 
 def test_manual_import_propagates_failure_to_exit_status():
     with patch('sys.argv', ['auto_prepopulate.py', '--gp', 'United States Grand Prix']), \
+         patch.object(auto, 'check_cache_exists', return_value=False), \
          patch.object(auto, 'run_prepopulate_with_retries', return_value=False):
         assert auto.main() == 1
 

@@ -362,3 +362,9 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+        except Exception as e:
+            print(f"Error fetching event schedule for season {args.year}: {e}")
+            return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
