@@ -18,3 +18,8 @@ backend/.env
 .kiro
 .vscode
 openspec
+
+# Audits and Tests
+PERFORMANCE_AUDIT.md
+REPAIR_REPORT.md
+tests/
