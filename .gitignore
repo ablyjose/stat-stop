@@ -9,6 +9,7 @@ backend/scripts/debug-*/
 backend/.env
 .pytest_cache
 .venv
+running_pids.txt
 
 # OpenSpec Folders
 .agent
