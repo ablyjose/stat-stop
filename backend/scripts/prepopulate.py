@@ -223,9 +223,15 @@ def prepopulate_session_telemetry(year: int, gp: str, session: str, force: bool 
             return False
 
         invalid_drivers = []
+        unavailable_drivers = {}
         
         for drv in all_drivers:
             cache_key = telemetry_cache_key(year, gp, session, drv, "fastest")
+            d_laps = sess.laps.pick_drivers(drv)
+            if session in ('Q', 'SQ', 'SS') and not d_laps['LapTime'].notna().any():
+                unavailable_drivers[drv] = 'No completed timed lap in source data'
+                print(f"    {drv}: no completed timed lap in {session}; fastest-lap telemetry is unavailable")
+                continue
             if not force:
                 cached = get_json_cache(cache_key)
                 try:
@@ -236,14 +242,15 @@ def prepopulate_session_telemetry(year: int, gp: str, session: str, force: bool 
                     pass
 
             try:
-                d_laps = sess.laps.pick_drivers(drv)
                 if d_laps.empty:
+                    print(f"    Telemetry failed for {drv}: no source laps")
                     invalid_drivers.append(drv)
                     continue
                 lap_d = pick_telemetry_lap(d_laps)
 
                 tel = get_lap_telemetry(lap_d)
                 if tel.empty:
+                    print(f"    Telemetry failed for {drv}: source telemetry is empty")
                     invalid_drivers.append(drv)
                     continue
 
@@ -274,12 +281,18 @@ def prepopulate_session_telemetry(year: int, gp: str, session: str, force: bool 
                 continue
 
         if invalid_drivers:
-            print(f"  ⚠ Telemetry remains uncached for {len(invalid_drivers)} driver(s) in {session}")
+            print(f"  ⚠ Telemetry remains uncached for {len(invalid_drivers)} driver(s) in {session}: {', '.join(invalid_drivers)}")
+            return False
+
+        cached_drivers = [drv for drv in all_drivers if drv not in unavailable_drivers]
+        if not cached_drivers:
+            print(f"  ⚠ No completed timed laps available in {session}; leaving the session incomplete")
             return False
 
         save_cache(completion_key, {
             "CacheVersion": TELEMETRY_CACHE_REVISION,
-            "Drivers": all_drivers
+            "Drivers": cached_drivers,
+            "UnavailableDrivers": unavailable_drivers
         })
         print(f"  ✓ Cached telemetry for drivers in {session}")
         return True
@@ -356,12 +369,6 @@ def main():
                 gp_name = row['EventName']
                 success = prepopulate_gp(args.year, gp_name, force=args.force) and success
             return 0 if success else 1
-        except Exception as e:
-            print(f"Error fetching event schedule for season {args.year}: {e}")
-            return 1
-
-if __name__ == "__main__":
-    sys.exit(main())
         except Exception as e:
             print(f"Error fetching event schedule for season {args.year}: {e}")
             return 1

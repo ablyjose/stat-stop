@@ -12,7 +12,7 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR.parent))
-from r2_client import check_cache_exists, get_r2_client, R2_BUCKET_NAME
+from r2_client import check_cache_exists, get_r2_client, R2_BUCKET_NAME, telemetry_completion_key
 
 SESSION_NAMES = {
     'Race': 'R', 'Qualifying': 'Q', 'Sprint': 'S',
@@ -26,13 +26,23 @@ def event_sessions(event):
 
 
 def check_is_prepopulated(year, gp, sessions=None):
-    """Use the original scheduler cache key, including for older imports.
+    """Check race timing, circuit annotations, and the event's telemetry sessions.
 
-    Telemetry completion markers change with cache revisions and should not
-    cause the scheduler to rebuild a weekend that already has race timing.
+    Use the shared revision helper so scheduler and importer agree on keys.
     Storage access errors propagate instead of being treated as cache misses.
     """
-    return check_cache_exists(f'timing/{year}/{gp}/R/laps.json')
+    for key in (f'timing/{year}/{gp}/R/laps.json', f'circuit/{year}/{gp}/corners.json'):
+        if not check_cache_exists(key):
+            print(f'  Missing cache entry: {key}', flush=True)
+            return False
+    if sessions is None:
+        sessions = event_sessions(fastf1.get_event(year, gp))
+    for session in sessions:
+        key = telemetry_completion_key(year, gp, session)
+        if not check_cache_exists(key):
+            print(f'  Missing cache entry: {key}', flush=True)
+            return False
+    return True
 
 
 def run_prepopulate_gp(year, gp, force=False):
@@ -55,8 +65,10 @@ def run_prepopulate_with_retries(year, gp, force=False, attempts=1, retry_delay=
         print(f'\n--- Attempt {attempt}/{attempts} for {gp} ({year}) ---', flush=True)
         try:
             if run_prepopulate_gp(year, gp, force=force):
-                print(f'✓ Successfully prepopulated {gp} ({year})', flush=True)
-                return True
+                if check_is_prepopulated(year, gp):
+                    print(f'✓ Successfully prepopulated {gp} ({year})', flush=True)
+                    return True
+                print(f'  Import finished, but required cache entries are still missing for {gp}.', flush=True)
         except OSError as error:
             print(f'Could not run prepopulation: {error}', flush=True)
         if attempt < attempts:
@@ -132,9 +144,14 @@ def main():
     parser.add_argument('--attempts', type=int, default=1,
                         help='Attempts per race; set above 1 to enable retry waits (default: 1)')
     parser.add_argument('--retry-delay', type=float, default=900, help='Seconds between retries')
+    parser.add_argument('--log-file', default=str(SCRIPT_DIR / 'auto_prepopulate.log'),
+                        help='Append output to this log file')
     args = parser.parse_args()
     if args.attempts < 1 or args.retry_delay < 0 or args.interval <= 0:
         parser.error('Attempts and interval must be positive; retry delay must be nonnegative.')
+    cache_dir = SCRIPT_DIR.parent.parent / 'cache'
+    cache_dir.mkdir(exist_ok=True)
+    fastf1.Cache.configure(cache_dir=str(cache_dir))
     if args.gp:
         if not args.force and check_is_prepopulated(args.year, args.gp):
             print(f'  ✓ {args.gp} ({args.year}) already prepopulated in R2.', flush=True)
@@ -151,9 +168,6 @@ def main():
     except Exception as error:
         print(f'R2 bucket access failed: {error}')
         return 1
-    cache_dir = SCRIPT_DIR.parent.parent / 'cache'
-    cache_dir.mkdir(exist_ok=True)
-    fastf1.Cache.configure(cache_dir=str(cache_dir))
     while True:
         try:
             success = run_schedule(args.year, args.force, args.attempts, args.retry_delay)
@@ -187,7 +201,12 @@ if __name__ == '__main__':
                 stream.reconfigure(encoding='utf-8')
     if '--help' in sys.argv or '-h' in sys.argv:
         sys.exit(main())
-    with (SCRIPT_DIR / 'auto_prepopulate.log').open('a', encoding='utf-8', buffering=1) as log:
+    log_parser = argparse.ArgumentParser(add_help=False)
+    log_parser.add_argument('--log-file', default=str(SCRIPT_DIR / 'auto_prepopulate.log'))
+    log_args, _ = log_parser.parse_known_args()
+    log_path = Path(log_args.log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open('a', encoding='utf-8', buffering=1) as log:
         with redirect_stdout(Tee(sys.stdout, log)), redirect_stderr(Tee(sys.stderr, log)):
             try:
                 sys.exit(main())
