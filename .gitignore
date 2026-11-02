@@ -2,10 +2,7 @@ cache
 __pycache__
 backend/__pycache__
 backend/routers/__pycache__
-backend/scripts/__pycache__
-backend/scripts/*.log
-backend/scripts/f1_race_ends.csv
-backend/scripts/debug-*/
+backend/scripts/*
 backend/.env
 .pytest_cache
 .venv
@@ -17,6 +14,7 @@ running_pids.txt
 .cursor
 .github
 .kiro
+.tools
 .vscode
 openspec
 
